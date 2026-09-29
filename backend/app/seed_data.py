@@ -4,13 +4,46 @@ from backend.app import models
 from backend.app.database import engine, Base
 from backend.app.security import get_password_hash
 
+from sqlalchemy import text
+
 def seed_database(db: Session):
     # Ensure all tables exist
     Base.metadata.create_all(bind=engine)
 
+    # Migrate columns if DB already existed
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE seats ADD COLUMN is_operable BOOLEAN DEFAULT 1"))
+            conn.commit()
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE seats ADD COLUMN inoperable_reason VARCHAR(100)"))
+            conn.commit()
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE passengers ADD COLUMN caption VARCHAR(200)"))
+            conn.commit()
+    except Exception:
+        pass
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE passengers SET caption = '👶 Carrying a baby, prefer lower berth' WHERE name = 'Priya Sharma' AND (caption IS NULL OR caption = '')"))
+            conn.execute(text("UPDATE passengers SET caption = '🪟 Sound sleeper, prefer window berth' WHERE name = 'Rahul Sharma' AND (caption IS NULL OR caption = '')"))
+            conn.commit()
+    except Exception:
+        pass
+
     # Check if already seeded
     if db.query(models.User).first():
         return
+
 
     print("[Blue Bus] Initializing database with RedBus-style seed records...")
 
@@ -217,40 +250,39 @@ def seed_database(db: Session):
             idx = 1
             for r in range(1, 6):
                 # Single berth on left (window)
+                s_num = f"{prefix}{idx}"
+                is_damaged = (bus_id == 1 and s_num == "U15")
                 seats.append(models.Seat(
                     bus_id=bus_id,
-                    seat_number=f"{prefix}{idx}",
+                    seat_number=s_num,
                     deck=deck,
                     row_num=r,
                     col_num=1,
                     seat_type="SLEEPER",
                     is_ladies=(idx in [1, 4]), # Some ladies seats
-                    price_multiplier=1.1 if deck == "LOWER" else 1.0
+                    price_multiplier=1.1 if deck == "LOWER" else 1.0,
+                    is_operable=(not is_damaged),
+                    inoperable_reason=("Damaged recliner handle" if is_damaged else None)
                 ))
                 idx += 1
                 # Double berth on right
-                seats.append(models.Seat(
-                    bus_id=bus_id,
-                    seat_number=f"{prefix}{idx}",
-                    deck=deck,
-                    row_num=r,
-                    col_num=3,
-                    seat_type="SLEEPER",
-                    is_ladies=False,
-                    price_multiplier=1.05 if deck == "LOWER" else 0.95
-                ))
-                idx += 1
-                seats.append(models.Seat(
-                    bus_id=bus_id,
-                    seat_number=f"{prefix}{idx}",
-                    deck=deck,
-                    row_num=r,
-                    col_num=4,
-                    seat_type="SLEEPER",
-                    is_ladies=False,
-                    price_multiplier=1.1 if deck == "LOWER" else 1.0
-                ))
-                idx += 1
+                for c in [3, 4]:
+                    s_num = f"{prefix}{idx}"
+                    is_damaged = (bus_id == 1 and s_num == "U15")
+                    seats.append(models.Seat(
+                        bus_id=bus_id,
+                        seat_number=s_num,
+                        deck=deck,
+                        row_num=r,
+                        col_num=c,
+                        seat_type="SLEEPER",
+                        is_ladies=False,
+                        price_multiplier=1.05 if deck == "LOWER" else 0.95,
+                        is_operable=(not is_damaged),
+                        inoperable_reason=("Damaged recliner handle" if is_damaged else None)
+                    ))
+                    idx += 1
+
         return seats
 
     def generate_seats_seater(bus_id, total_rows=10):
@@ -426,7 +458,8 @@ def seed_database(db: Session):
         age=29,
         gender="MALE",
         seat_number=b1_seats[0].seat_number,
-        seat_fare=950.0
+        seat_fare=950.0,
+        caption="🪟 Sound sleeper, prefer window berth"
     )
     p2 = models.Passenger(
         booking_id=bk1.booking_id,
@@ -489,6 +522,66 @@ def seed_database(db: Session):
         refund_status="REFUNDED"
     )
     db.add(canc1)
+
+    # 12. Sample Confirmed Booking for Priya Sharma on same trip (Seat L4)
+    bk3 = models.Booking(
+        pnr_number="BB-PNR-883192",
+        user_id=u_priya.user_id,
+        trip_id=t1.trip_id,
+        boarding_point_id=boarding_pt.stop_id if boarding_pt else None,
+        dropping_point_id=dropping_pt.stop_id if dropping_pt else None,
+        booking_date=datetime.utcnow() - timedelta(hours=3),
+        total_amount=950.0,
+        discount_amount=0.0,
+        final_amount=950.0,
+        coupon_code=None,
+        contact_email="priya.sharma@example.com",
+        contact_phone="+91 94441 22334",
+        status="CONFIRMED"
+    )
+    db.add(bk3)
+    db.flush()
+
+    p_priya = models.Passenger(
+        booking_id=bk3.booking_id,
+        seat_id=b1_seats[3].seat_id,
+        name="Priya Sharma",
+        age=27,
+        gender="FEMALE",
+        seat_number=b1_seats[3].seat_number,
+        seat_fare=950.0,
+        caption="👶 Carrying a baby, prefer lower berth"
+    )
+    db.add(p_priya)
+
+    pay3 = models.Payment(
+        booking_id=bk3.booking_id,
+        transaction_id="TXN-BB-771239",
+        payment_method="NET_BANKING",
+        amount=950.0,
+        status="SUCCESS",
+        payment_time=datetime.utcnow() - timedelta(hours=3)
+    )
+    db.add(pay3)
+    db.flush()
+
+    # 13. Sample Pending Peer-to-Peer Seat Swap Request (Rahul -> Priya)
+    swap_req_seed = models.SeatSwapRequest(
+        trip_id=t1.trip_id,
+        requester_booking_id=bk1.booking_id,
+        requester_passenger_id=p1.passenger_id,
+        requester_user_id=u_user.user_id,
+        requester_seat_id=p1.seat_id,
+        requester_seat_number=p1.seat_number,
+        target_booking_id=bk3.booking_id,
+        target_passenger_id=p_priya.passenger_id,
+        target_user_id=u_priya.user_id,
+        target_seat_id=p_priya.seat_id,
+        target_seat_number=p_priya.seat_number,
+        status="PENDING",
+        reason="Traveling with family on lower berth, would love to sit next to Seat L2!"
+    )
+    db.add(swap_req_seed)
 
     db.commit()
     print("[Blue Bus] Seed complete! Demo accounts ready: user@bluebus.com / admin@bluebus.com")

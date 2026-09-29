@@ -1,12 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { getTripSeatsApi, applyCouponApi } from '../api';
-import { Disc, Tag, Check, AlertCircle, Users, MapPin, Sparkles } from 'lucide-react';
+import { Disc, Tag, Check, AlertCircle, Users, MapPin, Sparkles, Wrench, Info } from 'lucide-react';
+
+const CAPTION_PRESETS = [
+  '👶 Carrying a baby',
+  '♿ In a wheelchair',
+  '😴 Sound sleeper',
+  '🚫 Not interested in seat swaps',
+  '🪟 Prefer window seat swap',
+  '🎧 Quiet traveler',
+  '👴 Senior citizen'
+];
 
 export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
   const [loading, setLoading] = useState(true);
   const [layoutData, setLayoutData] = useState(null);
   const [error, setError] = useState(null);
   const [activeDeck, setActiveDeck] = useState('LOWER');
+  const [hoveredSeat, setHoveredSeat] = useState(null);
 
   // Selected seats: array of seat items
   const [selectedSeats, setSelectedSeats] = useState([]);
@@ -15,7 +26,7 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
   const [selectedBoarding, setSelectedBoarding] = useState(null);
   const [selectedDropping, setSelectedDropping] = useState(null);
 
-  // Passengers info: map seat_id -> { name, age, gender }
+  // Passengers info: map seat_id -> { name, age, gender, caption }
   const [passengersMap, setPassengersMap] = useState({});
 
   // Contact details
@@ -62,9 +73,15 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
   };
 
   const handleSeatClick = (seat) => {
+    if (seat.status === 'INOPERABLE' || seat.is_operable === false) {
+      alert(`Seat ${seat.seat_number} is out of service (${seat.inoperable_reason || 'Maintenance/Damaged'}). It cannot be booked.`);
+      return;
+    }
+
     if (seat.status === 'BOOKED' || seat.status === 'LADIES_BOOKED') {
       return;
     }
+
 
     const exists = selectedSeats.some(s => s.seat_id === seat.seat_id);
     if (exists) {
@@ -94,7 +111,8 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
         [seat.seat_id]: { 
           name: defaultName || '', 
           age: defaultAge || 25, 
-          gender: defaultGender || 'MALE' 
+          gender: defaultGender || 'MALE',
+          caption: ''
         }
       }));
       resetCoupon();
@@ -112,6 +130,7 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
         name: '',
         age: 25,
         gender: 'MALE',
+        caption: '',
         ...(prev[seatId] || {}),
         [field]: val
       }
@@ -189,7 +208,8 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
           seat_number: s.seat_number,
           name: (p.name || 'Passenger').trim(),
           age: Number(p.age) || 25,
-          gender: (p.gender || 'MALE').toUpperCase()
+          gender: (p.gender || 'MALE').toUpperCase(),
+          caption: (p.caption || '').trim() || null
         };
       })
     };
@@ -266,14 +286,85 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
             </div>
           </div>
 
+          {/* Live Seat & Neighbor Insight Bar */}
+          <div style={{
+            marginBottom: '1rem',
+            padding: '0.5rem 0.85rem',
+            borderRadius: 8,
+            fontSize: '0.78rem',
+            background: hoveredSeat 
+              ? (hoveredSeat.status === 'BOOKED' || hoveredSeat.status === 'LADIES_BOOKED' ? '#fff7ed' : hoveredSeat.status === 'INOPERABLE' || !hoveredSeat.is_operable ? '#fef2f2' : '#f0fdf4')
+              : '#f8fafc',
+            border: hoveredSeat 
+              ? (hoveredSeat.status === 'BOOKED' || hoveredSeat.status === 'LADIES_BOOKED' ? '1px solid #fdba74' : hoveredSeat.status === 'INOPERABLE' || !hoveredSeat.is_operable ? '1px solid #fca5a5' : '1px solid #86efac')
+              : '1px dashed #cbd5e1',
+            minHeight: 40,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            transition: 'all 0.15s ease'
+          }}>
+            {hoveredSeat ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: '100%' }}>
+                <span style={{ fontWeight: 800, fontSize: '0.85rem', color: '#0f172a' }}>
+                  Seat {hoveredSeat.seat_number}
+                </span>
+                {(hoveredSeat.status === 'INOPERABLE' || !hoveredSeat.is_operable) ? (
+                  <span style={{ color: '#dc2626', fontWeight: 700 }}>
+                    ⚠️ Damaged / Out of Service ({hoveredSeat.inoperable_reason || 'Maintenance'})
+                  </span>
+                ) : (hoveredSeat.status === 'BOOKED' || hoveredSeat.status === 'LADIES_BOOKED') ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{
+                      background: hoveredSeat.passenger_gender === 'FEMALE' ? '#fce7f3' : '#e2e8f0',
+                      color: hoveredSeat.passenger_gender === 'FEMALE' ? '#9d174d' : '#334155',
+                      padding: '1px 6px',
+                      borderRadius: 4,
+                      fontWeight: 800
+                    }}>
+                      {hoveredSeat.passenger_gender === 'FEMALE' ? '♀ Female' : '♂ Male'} ({hoveredSeat.passenger_age || 26} yrs)
+                    </span>
+                    {hoveredSeat.passenger_caption ? (
+                      <span style={{
+                        background: '#fef08a',
+                        color: '#854d0e',
+                        padding: '1px 6px',
+                        borderRadius: 4,
+                        fontWeight: 700,
+                        border: '1px solid #fde047'
+                      }}>
+                        🏷️ "{hoveredSeat.passenger_caption}"
+                      </span>
+                    ) : (
+                      <span style={{ color: '#64748b', fontStyle: 'italic' }}>
+                        No travel tag
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <span style={{ color: '#16a34a', fontWeight: 700 }}>
+                    🟢 Available &bull; ₹{hoveredSeat.price} ({hoveredSeat.berth_type || 'Standard'})
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div style={{ color: '#64748b', display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem' }}>
+                <Info size={14} color="#3b82f6" />
+                <span>Hover over any occupied seat to see passenger gender, age, and travel captions (baby, wheelchair, sleep/swap preference).</span>
+              </div>
+            )}
+          </div>
+
           {/* Seat Grid */}
           {layoutData.is_sleeper ? (
             <div className="seat-grid-sleeper">
               {currentDeckSeats.map((seat) => {
                 const isSelected = selectedSeats.some(s => s.seat_id === seat.seat_id);
                 const isBooked = seat.status === 'BOOKED' || seat.status === 'LADIES_BOOKED';
+                const isInoperable = seat.status === 'INOPERABLE' || seat.is_operable === false;
                 let seatClass = 'seat-unit sleeper';
                 if (isSelected) seatClass += ' selected';
+                else if (isInoperable) seatClass += ' inoperable';
                 else if (seat.status === 'LADIES_BOOKED') seatClass += ' ladies-booked';
                 else if (seat.status === 'BOOKED') seatClass += ' booked';
                 else if (seat.status === 'LADIES_RESERVED') seatClass += ' ladies-reserved';
@@ -283,21 +374,33 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
                     <div 
                       className={seatClass}
                       onClick={() => handleSeatClick(seat)}
-                      title={isBooked 
-                        ? `Seat ${seat.seat_number} - Occupied by ${seat.passenger_gender === 'FEMALE' ? 'Female' : 'Male'} (${seat.passenger_age || 26} yrs)` 
+                      onMouseEnter={() => setHoveredSeat(seat)}
+                      onMouseLeave={() => setHoveredSeat(null)}
+                      title={isInoperable
+                        ? `Seat ${seat.seat_number} - Out of Service (${seat.inoperable_reason || 'Damaged / Under Maintenance'})`
+                        : isBooked 
+                        ? `Seat ${seat.seat_number} - Occupied by ${seat.passenger_gender === 'FEMALE' ? 'Female' : 'Male'} (${seat.passenger_age || 26} yrs)${seat.passenger_caption ? `\n🏷️ Traveler Note: "${seat.passenger_caption}"` : ''}` 
                         : `${seat.seat_number} - ₹${seat.price} (Available)`}
                     >
                       {/* Berth Pillow Graphic */}
                       <div style={{ 
                         width: '75%', 
                         height: 4, 
-                        background: isSelected ? 'rgba(255,255,255,0.6)' : '#cbd5e1', 
+                        background: isInoperable ? '#fca5a5' : isSelected ? 'rgba(255,255,255,0.6)' : '#cbd5e1', 
                         borderRadius: 2, 
                         marginBottom: 3 
                       }} />
 
-                      {isBooked ? (
+                      {isInoperable ? (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          <Wrench size={13} style={{ color: '#dc2626', marginBottom: 1 }} />
+                          <span className="seat-pill-label" style={{ fontWeight: 800, color: '#dc2626' }}>{seat.seat_number}</span>
+                          <span style={{ fontSize: '0.58rem', background: '#fee2e2', color: '#991b1b', padding: '1px 3px', borderRadius: 3, fontWeight: 700 }}>
+                            Damaged
+                          </span>
+                        </div>
+                      ) : isBooked ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, width: '100%' }}>
                           <span className="seat-pill-label" style={{ fontWeight: 800 }}>{seat.seat_number}</span>
                           {seat.passenger_gender === 'FEMALE' ? (
                             <span style={{ fontSize: '0.62rem', background: '#fbcfe8', color: '#9d174d', padding: '1px 4px', borderRadius: 3, fontWeight: 800 }}>
@@ -306,6 +409,27 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
                           ) : (
                             <span style={{ fontSize: '0.62rem', background: '#e2e8f0', color: '#334155', padding: '1px 4px', borderRadius: 3, fontWeight: 800 }}>
                               ♂ {seat.passenger_age || 32}M
+                            </span>
+                          )}
+                          {seat.passenger_caption && (
+                            <span 
+                              style={{ 
+                                fontSize: '0.54rem', 
+                                background: '#fef08a', 
+                                color: '#854d0e', 
+                                padding: '1px 3px', 
+                                borderRadius: 3, 
+                                fontWeight: 700, 
+                                maxWidth: '92%', 
+                                whiteSpace: 'nowrap', 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis',
+                                marginTop: 1,
+                                border: '1px solid #fde047'
+                              }}
+                              title={seat.passenger_caption}
+                            >
+                              🏷️ {seat.passenger_caption}
                             </span>
                           )}
                         </div>
@@ -329,8 +453,10 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
               {currentDeckSeats.map((seat) => {
                 const isSelected = selectedSeats.some(s => s.seat_id === seat.seat_id);
                 const isBooked = seat.status === 'BOOKED' || seat.status === 'LADIES_BOOKED';
+                const isInoperable = seat.status === 'INOPERABLE' || seat.is_operable === false;
                 let seatClass = 'seat-unit seater';
                 if (isSelected) seatClass += ' selected';
+                else if (isInoperable) seatClass += ' inoperable';
                 else if (seat.status === 'LADIES_BOOKED') seatClass += ' ladies-booked';
                 else if (seat.status === 'BOOKED') seatClass += ' booked';
                 else if (seat.status === 'LADIES_RESERVED') seatClass += ' ladies-reserved';
@@ -340,21 +466,33 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
                     <div 
                       className={seatClass}
                       onClick={() => handleSeatClick(seat)}
-                      title={isBooked 
-                        ? `Seat ${seat.seat_number} - Occupied by ${seat.passenger_gender === 'FEMALE' ? 'Female' : 'Male'} (${seat.passenger_age || 26} yrs)` 
+                      onMouseEnter={() => setHoveredSeat(seat)}
+                      onMouseLeave={() => setHoveredSeat(null)}
+                      title={isInoperable
+                        ? `Seat ${seat.seat_number} - Out of Service (${seat.inoperable_reason || 'Damaged / Under Maintenance'})`
+                        : isBooked 
+                        ? `Seat ${seat.seat_number} - Occupied by ${seat.passenger_gender === 'FEMALE' ? 'Female' : 'Male'} (${seat.passenger_age || 26} yrs)${seat.passenger_caption ? `\n🏷️ Traveler Note: "${seat.passenger_caption}"` : ''}` 
                         : `${seat.seat_number} - ₹${seat.price} (Available)`}
                     >
                       {/* Chair Headrest Graphic */}
                       <div style={{ 
                         width: '65%', 
                         height: 3, 
-                        background: isSelected ? 'rgba(255,255,255,0.6)' : '#cbd5e1', 
+                        background: isInoperable ? '#fca5a5' : isSelected ? 'rgba(255,255,255,0.6)' : '#cbd5e1', 
                         borderRadius: '3px 3px 0 0', 
                         marginBottom: 2 
                       }} />
 
-                      {isBooked ? (
+                      {isInoperable ? (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+                          <Wrench size={13} style={{ color: '#dc2626', marginBottom: 1 }} />
+                          <span className="seat-pill-label" style={{ fontWeight: 800, color: '#dc2626' }}>{seat.seat_number}</span>
+                          <span style={{ fontSize: '0.58rem', background: '#fee2e2', color: '#991b1b', padding: '1px 3px', borderRadius: 3, fontWeight: 700 }}>
+                            Damaged
+                          </span>
+                        </div>
+                      ) : isBooked ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1, width: '100%' }}>
                           <span className="seat-pill-label" style={{ fontWeight: 800 }}>{seat.seat_number}</span>
                           {seat.passenger_gender === 'FEMALE' ? (
                             <span style={{ fontSize: '0.62rem', background: '#fbcfe8', color: '#9d174d', padding: '1px 4px', borderRadius: 3, fontWeight: 800 }}>
@@ -363,6 +501,27 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
                           ) : (
                             <span style={{ fontSize: '0.62rem', background: '#e2e8f0', color: '#334155', padding: '1px 4px', borderRadius: 3, fontWeight: 800 }}>
                               ♂ {seat.passenger_age || 32}M
+                            </span>
+                          )}
+                          {seat.passenger_caption && (
+                            <span 
+                              style={{ 
+                                fontSize: '0.54rem', 
+                                background: '#fef08a', 
+                                color: '#854d0e', 
+                                padding: '1px 3px', 
+                                borderRadius: 3, 
+                                fontWeight: 700, 
+                                maxWidth: '92%', 
+                                whiteSpace: 'nowrap', 
+                                overflow: 'hidden', 
+                                textOverflow: 'ellipsis',
+                                marginTop: 1,
+                                border: '1px solid #fde047'
+                              }}
+                              title={seat.passenger_caption}
+                            >
+                              🏷️ {seat.passenger_caption}
                             </span>
                           )}
                         </div>
@@ -400,6 +559,10 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
             <div className="legend-item">
               <div className="legend-box" style={{ background: '#fce7f3', borderColor: '#f472b6' }}></div>
               <span>Booked (♀ Female)</span>
+            </div>
+            <div className="legend-item">
+              <div className="legend-box" style={{ background: '#fef2f2', borderColor: '#fca5a5' }}></div>
+              <span>Damaged / Inoperable</span>
             </div>
           </div>
 
@@ -477,13 +640,13 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
           <div>
             <div className="section-subhead">Passenger Details</div>
             {selectedSeats.map((seat, idx) => {
-              const psg = passengersMap[seat.seat_id] || { name: '', age: 25, gender: 'MALE' };
+              const psg = passengersMap[seat.seat_id] || { name: '', age: 25, gender: 'MALE', caption: '' };
               return (
                 <div key={seat.seat_id} className="passenger-entry-box">
                   <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--primary)', marginBottom: '0.4rem' }}>
                     Passenger {idx + 1} — Seat {seat.seat_number}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.8fr 1fr', gap: '0.5rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 0.8fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                     <input 
                       type="text" 
                       placeholder="Full Name"
@@ -511,6 +674,41 @@ export default function SeatLayout({ trip, currentUser, onProceedToPayment }) {
                       <option value="FEMALE">Female</option>
                       <option value="OTHER">Other</option>
                     </select>
+                  </div>
+
+                  {/* Travel Caption / Note */}
+                  <div style={{ background: '#f8fafc', padding: '0.45rem', borderRadius: 6, border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Tag size={12} color="#2563eb" />
+                      <span>Travel Note / Tag (shown on seat hover):</span>
+                    </div>
+                    <input 
+                      type="text" 
+                      placeholder="e.g. Carrying a baby, In a wheelchair, Sound sleeper, No swaps..."
+                      value={psg.caption || ''}
+                      onChange={(e) => handlePassengerChange(seat.seat_id, 'caption', e.target.value)}
+                      style={{ width: '100%', padding: '0.35rem 0.5rem', border: '1px solid var(--border)', borderRadius: 4, fontSize: '0.78rem', marginBottom: 4 }}
+                    />
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      {CAPTION_PRESETS.map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => handlePassengerChange(seat.seat_id, 'caption', preset)}
+                          style={{
+                            fontSize: '0.67rem',
+                            padding: '2px 6px',
+                            background: psg.caption === preset ? '#dbeafe' : '#ffffff',
+                            color: psg.caption === preset ? '#1e40af' : '#475569',
+                            border: psg.caption === preset ? '1px solid #93c5fd' : '1px solid #cbd5e1',
+                            borderRadius: 4,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               );

@@ -108,6 +108,8 @@ class Seat(Base):
     seat_type = Column(String(20), default="SLEEPER", nullable=False) # SLEEPER, SEATER
     is_ladies = Column(Boolean, default=False, nullable=False)
     price_multiplier = Column(Float, default=1.0, nullable=False)
+    is_operable = Column(Boolean, default=True, nullable=False) # True = normal, False = damaged/out of service
+    inoperable_reason = Column(String(100), nullable=True) # e.g. "Damaged seat cushion", "Recliner broken"
 
     bus = relationship("Bus", back_populates="seats")
     passengers = relationship("Passenger", back_populates="seat")
@@ -176,6 +178,7 @@ class Passenger(Base):
     gender = Column(String(10), nullable=False) # MALE, FEMALE, OTHER
     seat_number = Column(String(10), nullable=False)
     seat_fare = Column(Float, nullable=False)
+    caption = Column(String(200), nullable=True) # e.g. 'Carrying a baby', 'In a wheelchair', 'Sound sleeper', 'Not interested in swaps', etc.
 
     booking = relationship("Booking", back_populates="passengers")
     seat = relationship("Seat", back_populates="passengers")
@@ -247,3 +250,40 @@ class Coupon(Base):
     usage_limit = Column(Integer, default=500, nullable=False)
     used_count = Column(Integer, default=0, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+
+
+# 14. Peer-to-Peer Seat Swap Requests
+class SeatSwapRequest(Base):
+    __tablename__ = "seat_swap_requests"
+
+    request_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    trip_id = Column(Integer, ForeignKey("trips.trip_id", ondelete="CASCADE"), nullable=False)
+
+    # Requester (who wants to swap)
+    requester_booking_id = Column(Integer, ForeignKey("bookings.booking_id", ondelete="CASCADE"), nullable=False)
+    requester_passenger_id = Column(Integer, ForeignKey("passengers.passenger_id", ondelete="CASCADE"), nullable=False)
+    requester_user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    requester_seat_id = Column(Integer, ForeignKey("seats.seat_id"), nullable=False)
+    requester_seat_number = Column(String(10), nullable=False)
+
+    # Target (booked person receiving the swap request)
+    target_booking_id = Column(Integer, ForeignKey("bookings.booking_id", ondelete="CASCADE"), nullable=False)
+    target_passenger_id = Column(Integer, ForeignKey("passengers.passenger_id", ondelete="CASCADE"), nullable=False)
+    target_user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    target_seat_id = Column(Integer, ForeignKey("seats.seat_id"), nullable=False)
+    target_seat_number = Column(String(10), nullable=False)
+
+    # PENDING, ACCEPTED, REJECTED, CANCELLED
+    status = Column(String(20), default="PENDING", nullable=False)
+    reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    trip = relationship("Trip")
+    requester_user = relationship("User", foreign_keys=[requester_user_id])
+    target_user = relationship("User", foreign_keys=[target_user_id])
+    requester_passenger = relationship("Passenger", foreign_keys=[requester_passenger_id])
+    target_passenger = relationship("Passenger", foreign_keys=[target_passenger_id])
+    requester_booking = relationship("Booking", foreign_keys=[requester_booking_id])
+    target_booking = relationship("Booking", foreign_keys=[target_booking_id])
+

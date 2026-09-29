@@ -177,3 +177,181 @@ def test_reviews():
     reviews = rev_res.json()
     assert len(reviews) > 0
     assert reviews[0]["rating"] >= 1
+
+def test_inoperable_seats_and_layout():
+    # Fetch seat layout for trip 1
+    res = client.get("/api/trips/1/seats")
+    assert res.status_code == 200
+    data = res.json()
+
+    # Find the seeded inoperable seat (U15 on bus 1)
+    upper_deck = data["upper_deck"]
+    inop_seats = [s for s in upper_deck if s["seat_number"] == "U15"]
+    assert len(inop_seats) == 1
+    u15 = inop_seats[0]
+    assert u15["status"] == "INOPERABLE"
+    assert u15["is_operable"] is False
+    assert "Damaged" in (u15["inoperable_reason"] or "")
+
+    # Admin toggling seat back to operable
+    admin_auth = client.post("/api/auth/login", json={"email": "admin@bluebus.com", "password": "Admin123!"})
+    headers = {"Authorization": f"Bearer {admin_auth.json()['access_token']}"}
+    toggle_res = client.put("/api/buses/1/seats/U15/toggle-operable", headers=headers, json={"is_operable": True})
+    assert toggle_res.status_code == 200
+    assert toggle_res.json()["is_operable"] is True
+
+    # Toggle back to inoperable
+    toggle_back = client.put("/api/buses/1/seats/U15/toggle-operable", headers=headers, json={"is_operable": False, "reason": "Damaged recliner handle"})
+    assert toggle_back.status_code == 200
+    assert toggle_back.json()["is_operable"] is False
+
+import uuid
+
+def test_peer_to_peer_seat_swap_flow():
+    # 1. Login as Rahul
+    rahul_auth = client.post("/api/auth/login", json={
+        "email": "user@bluebus.com",
+        "password": "Password123!"
+    })
+    assert rahul_auth.status_code == 200
+    rahul_token = rahul_auth.json()["access_token"]
+    rahul_headers = {"Authorization": f"Bearer {rahul_token}"}
+
+    # 2. Login as Priya Sharma
+    priya_auth = client.post("/api/auth/login", json={
+        "email": "priya.sharma@example.com",
+        "password": "Password123!"
+    })
+    assert priya_auth.status_code == 200
+    priya_token = priya_auth.json()["access_token"]
+    priya_headers = {"Authorization": f"Bearer {priya_token}"}
+
+    # Get current bookings for both
+    rahul_booking = client.get("/api/bookings/pnr/BB-PNR-772901").json()
+    priya_booking = client.get("/api/bookings/pnr/BB-PNR-883192").json()
+
+    rahul_psg = rahul_booking["passengers"][0]
+    priya_psg = priya_booking["passengers"][0]
+    rahul_seat = rahul_psg["seat_number"]
+    priya_seat = priya_psg["seat_number"]
+
+    # Check Priya's incoming pending requests
+    inc_res = client.get("/api/bookings/swap-requests/incoming", headers=priya_headers)
+    assert inc_res.status_code == 200
+    pending_reqs = [r for r in inc_res.json() if r["status"] == "PENDING"]
+
+    if not pending_reqs:
+        # Create a new peer swap request from Rahul to Priya's seat
+        create_swap = client.post(
+            f"/api/bookings/BB-PNR-772901/request-swap",
+            headers=rahul_headers,
+            json={
+                "requester_passenger_id": rahul_psg["passenger_id"],
+                "target_seat_id": priya_psg["seat_id"],
+                "reason": "Looking to swap seat"
+            }
+        )
+        assert create_swap.status_code == 200
+        req_id = create_swap.json()["request_id"]
+    else:
+        req_id = pending_reqs[0]["request_id"]
+
+    # 3. Priya accepts the swap request
+    accept_res = client.post(f"/api/bookings/swap-requests/{req_id}/respond", headers=priya_headers, json={
+        "action": "ACCEPT"
+    })
+    assert accept_res.status_code == 200
+    resp_data = accept_res.json()
+    assert resp_data["status"] == "ACCEPTED"
+
+    # 4. Verify in DB via PNR that seats actually swapped!
+    rahul_pnr_after = client.get("/api/bookings/pnr/BB-PNR-772901").json()
+    priya_pnr_after = client.get("/api/bookings/pnr/BB-PNR-883192").json()
+
+    assert rahul_pnr_after["passengers"][0]["seat_number"] == priya_seat
+    assert priya_pnr_after["passengers"][0]["seat_number"] == rahul_seat
+
+def test_admin_create_bus_with_inoperable_seats():
+    admin_auth = client.post("/api/auth/login", json={"email": "admin@bluebus.com", "password": "Admin123!"})
+    headers = {"Authorization": f"Bearer {admin_auth.json()['access_token']}"}
+
+    unique_bus_no = f"KA-01-TEST-{uuid.uuid4().hex[:6].upper()}"
+    create_res = client.post("/api/buses", headers=headers, json={
+        "operator_id": 1,
+        "bus_number": unique_bus_no,
+        "bus_name": "Test Express Sleeper",
+        "bus_type": "AC Sleeper (2+1)",
+        "has_ac": True,
+        "is_sleeper": True,
+        "total_seats": 30,
+        "amenities": "WiFi,GPS",
+        "inoperable_seats": ["L2", "U5"],
+        "inoperable_reason": "Broken cushion"
+    })
+    assert create_res.status_code == 200
+    bus_data = create_res.json()
+    new_bus_id = bus_data["bus_id"]
+
+    # Verify seats via get_bus_seats
+    seats_res = client.get(f"/api/buses/{new_bus_id}/seats")
+    assert seats_res.status_code == 200
+    seats = seats_res.json()
+    assert len(seats) == 30
+
+    l2 = [s for s in seats if s["seat_number"] == "L2"][0]
+    assert l2["is_operable"] is False
+    assert l2["inoperable_reason"] == "Broken cushion"
+
+    u5 = [s for s in seats if s["seat_number"] == "U5"][0]
+    assert u5["is_operable"] is False
+
+    l1 = [s for s in seats if s["seat_number"] == "L1"][0]
+    assert l1["is_operable"] is True
+
+def test_passenger_travel_captions():
+    # 1. Verify trip 1 layout returns passenger_caption for booked seats
+    layout_res = client.get("/api/trips/1/seats")
+    assert layout_res.status_code == 200
+    layout = layout_res.json()
+    all_seats = layout["lower_deck"] + layout["upper_deck"]
+
+    # Check Priya's or Rahul's seat
+    booked_with_caption = [s for s in all_seats if s["status"] in ["BOOKED", "LADIES_BOOKED"] and s["passenger_caption"]]
+    assert len(booked_with_caption) >= 1
+    sample = booked_with_caption[0]
+    assert sample["passenger_caption"] is not None
+
+    # 2. Book a new seat with a custom caption
+    auth = client.post("/api/auth/login", json={"email": "user@bluebus.com", "password": "Password123!"})
+    headers = {"Authorization": f"Bearer {auth.json()['access_token']}"}
+
+    # Find an available seat
+    avail = [s for s in all_seats if s["status"] == "AVAILABLE" and s["is_operable"]][0]
+
+    book_res = client.post("/api/bookings", headers=headers, json={
+        "trip_id": 1,
+        "contact_email": "user@bluebus.com",
+        "contact_phone": "9876543210",
+        "payment_method": "UPI",
+        "passengers": [
+            {
+                "seat_id": avail["seat_id"],
+                "name": "Kavitha Raj",
+                "age": 31,
+                "gender": "FEMALE",
+                "caption": "♿ In a wheelchair, needs mobility help"
+            }
+        ]
+    })
+    assert book_res.status_code == 200
+    b_data = book_res.json()
+    assert b_data["passengers"][0]["caption"] == "♿ In a wheelchair, needs mobility help"
+
+    # 3. Check that the trip layout now reflects this new caption on the seat
+    updated_layout = client.get("/api/trips/1/seats").json()
+    updated_all = updated_layout["lower_deck"] + updated_layout["upper_deck"]
+    matched = [s for s in updated_all if s["seat_id"] == avail["seat_id"]][0]
+    assert matched["status"] in ["BOOKED", "LADIES_BOOKED"]
+    assert matched["passenger_caption"] == "♿ In a wheelchair, needs mobility help"
+
+

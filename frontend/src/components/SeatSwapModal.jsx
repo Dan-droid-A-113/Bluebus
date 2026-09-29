@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowRightLeft, CheckCircle2, AlertCircle, Loader2, Disc } from 'lucide-react';
-import { getTripSeatsApi, swapSeatApi } from '../api';
+import { X, ArrowRightLeft, CheckCircle2, AlertCircle, Loader2, Send, Wrench, ShieldAlert } from 'lucide-react';
+import { getTripSeatsApi, swapSeatApi, requestPeerSwapApi } from '../api';
 
 export default function SeatSwapModal({ booking, onClose, onSuccess }) {
   const [layout, setLayout] = useState(null);
@@ -9,9 +9,12 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
     booking.passengers?.[0]?.passenger_id || null
   );
   const [selectedNewSeat, setSelectedNewSeat] = useState(null);
+  const [swapReason, setSwapReason] = useState('Traveling with companion / preference for this seat');
   const [activeDeck, setActiveDeck] = useState('LOWER');
   const [swapping, setSwapping] = useState(false);
   const [error, setError] = useState(null);
+  const [successMsg, setSuccessMsg] = useState('');
+
 
   useEffect(() => {
     loadTripSeats();
@@ -32,38 +35,57 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
 
   const handleSwapSubmit = async () => {
     if (!selectedPassengerId || !selectedNewSeat) {
-      alert('Please select the passenger and the new available seat.');
+      alert('Please select a passenger and a target seat.');
       return;
     }
 
     setSwapping(true);
     setError(null);
+    setSuccessMsg('');
+
     try {
-      const res = await swapSeatApi(booking.pnr_number, {
-        passenger_id: selectedPassengerId,
-        new_seat_id: selectedNewSeat.seat_id,
-        reason: 'Passenger requested seat swap'
-      });
-      alert(res.message);
-      onSuccess(res);
+      if (selectedNewSeat.status === 'AVAILABLE') {
+        // Direct instant relocation to empty seat
+        const res = await swapSeatApi(booking.pnr_number, {
+          passenger_id: selectedPassengerId,
+          new_seat_id: selectedNewSeat.seat_id,
+          reason: 'Passenger requested seat swap'
+        });
+        setSuccessMsg(res.message);
+        setTimeout(() => {
+          onSuccess(res);
+        }, 1500);
+      } else {
+        // Peer-to-peer swap request to occupied seat
+        const res = await requestPeerSwapApi(booking.pnr_number, {
+          requester_passenger_id: selectedPassengerId,
+          target_seat_id: selectedNewSeat.seat_id,
+          reason: swapReason
+        });
+        setSuccessMsg(`Swap request sent to passenger of Seat ${selectedNewSeat.seat_number}! They will see it in their account to Accept or Reject.`);
+        setTimeout(() => {
+          onSuccess(res);
+        }, 2200);
+      }
     } catch (e) {
-      setError(e.message || 'Failed to swap seat');
+      setError(e.message || 'Failed to process seat swap request');
       setSwapping(false);
     }
   };
 
   const currentPassenger = booking.passengers.find(p => p.passenger_id === selectedPassengerId);
   const currentDeckSeats = activeDeck === 'UPPER' ? layout?.upper_deck : layout?.lower_deck;
+  const isTargetOccupied = selectedNewSeat && (selectedNewSeat.status === 'BOOKED' || selectedNewSeat.status === 'LADIES_BOOKED');
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: 620 }}>
+      <div className="modal-content" style={{ maxWidth: 640 }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border)', paddingBottom: '0.85rem', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--primary)' }}>
             <ArrowRightLeft size={22} />
             <div>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Seat Swap &amp; Relocation</h3>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Seat Swap &amp; Passenger Exchange</h3>
               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                 PNR: {booking.pnr_number} &bull; {booking.bus_name}
               </div>
@@ -77,15 +99,23 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
         {loading ? (
           <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
             <Loader2 size={32} className="animate-spin" style={{ margin: '0 auto 10px', color: 'var(--primary)' }} />
-            <div>Loading available seats for seat swap...</div>
-          </div>
-        ) : error ? (
-          <div style={{ padding: '1rem', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 8 }}>
-            {error}
+            <div>Loading live seat layout for seat swap...</div>
           </div>
         ) : (
           <div>
-            {/* Step 1: Select Passenger to Swap */}
+            {error && (
+              <div style={{ padding: '0.85rem', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 8, marginBottom: '1rem', fontSize: '0.85rem' }}>
+                {error}
+              </div>
+            )}
+
+            {successMsg && (
+              <div style={{ padding: '0.85rem', background: 'var(--success-bg)', color: 'var(--success)', borderRadius: 8, marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 700 }}>
+                {successMsg}
+              </div>
+            )}
+
+            {/* Step 1: Select Passenger */}
             <div style={{ marginBottom: '1.25rem' }}>
               <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: 6 }}>
                 1. SELECT PASSENGER TO MOVE
@@ -115,11 +145,11 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
               </div>
             </div>
 
-            {/* Step 2: Pick New Available Seat */}
+            {/* Step 2: Choose Seat */}
             <div style={{ marginBottom: '1.25rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                 <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                  2. CHOOSE NEW SEAT TO SWAP INTO
+                  2. PICK SEAT (FREE OR BOOKED BY FELLOW PASSENGER)
                 </label>
                 {layout?.upper_deck?.length > 0 && (
                   <div style={{ display: 'flex', gap: 4 }}>
@@ -141,12 +171,27 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
                 )}
               </div>
 
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: '1rem', fontSize: '0.74rem', color: 'var(--text-muted)', marginBottom: 8, flexWrap: 'wrap' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 12, height: 12, border: '1px solid #cbd5e1', background: '#fff', borderRadius: 2 }} /> Available (Direct)
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 12, height: 12, border: '1px solid #fca5a5', background: '#fee2e2', borderRadius: 2 }} /> Occupied (Request Swap)
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ width: 12, height: 12, border: '1px dashed #cbd5e1', background: '#e2e8f0', borderRadius: 2 }} /> Inoperable (Damaged)
+                </span>
+              </div>
+
               {/* Mini Seat Chassis */}
-              <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 8, padding: '1rem', maxHeight: 240, overflowY: 'auto' }}>
+              <div style={{ background: '#f8fafc', border: '1px solid var(--border)', borderRadius: 8, padding: '1rem', maxHeight: 250, overflowY: 'auto' }}>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
                   {currentDeckSeats?.map(seat => {
-                    const isAvailable = seat.status === 'AVAILABLE';
                     const isCurrent = currentPassenger?.seat_number === seat.seat_number;
+                    const isAvailable = seat.status === 'AVAILABLE';
+                    const isBooked = seat.status === 'BOOKED' || seat.status === 'LADIES_BOOKED';
+                    const isInoperable = seat.status === 'INOPERABLE' || seat.is_operable === false;
                     const isPicked = selectedNewSeat?.seat_id === seat.seat_id;
 
                     let bg = '#ffffff';
@@ -158,21 +203,34 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
                       bg = '#e0f2fe';
                       border = '2px solid #0284c7';
                       color = '#0284c7';
+                      cursor = 'default';
                     } else if (isPicked) {
-                      bg = 'var(--primary)';
-                      border = '2px solid var(--primary-hover)';
-                      color = '#ffffff';
-                    } else if (!isAvailable) {
+                      if (isBooked) {
+                        bg = '#f59e0b';
+                        border = '2px solid #d97706';
+                        color = '#ffffff';
+                      } else {
+                        bg = 'var(--primary)';
+                        border = '2px solid var(--primary-hover)';
+                        color = '#ffffff';
+                      }
+                    } else if (isInoperable) {
                       bg = '#e2e8f0';
-                      color = '#94a3b8';
+                      border = '1px dashed #94a3b8';
+                      color = '#64748b';
                       cursor = 'not-allowed';
+                    } else if (isBooked) {
+                      bg = '#fee2e2';
+                      border = '1px solid #fca5a5';
+                      color = '#991b1b';
+                      cursor = 'pointer';
                     }
 
                     return (
                       <div
                         key={seat.seat_id}
                         onClick={() => {
-                          if (isAvailable && !isCurrent) {
+                          if (!isCurrent && !isInoperable) {
                             setSelectedNewSeat(seat);
                           }
                         }}
@@ -182,17 +240,51 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
                           color: color,
                           cursor: cursor,
                           borderRadius: 6,
-                          padding: '0.6rem 0.4rem',
+                          padding: '0.6rem 0.3rem',
                           textAlign: 'center',
                           fontSize: '0.78rem',
-                          fontWeight: 700
+                          fontWeight: 700,
+                          transition: 'all 0.15s ease'
                         }}
-                        title={isCurrent ? 'Current Seat' : (isAvailable ? `Available - ₹${seat.price}` : `Occupied by ${seat.passenger_gender || 'Passenger'}`)}
+                        title={
+                          isInoperable
+                            ? `Seat ${seat.seat_number} Out of Service: ${seat.inoperable_reason || 'Maintenance'}`
+                            : isCurrent
+                            ? 'Your Current Seat'
+                            : isAvailable
+                            ? `Available - ₹${seat.price}`
+                            : `Occupied by ${seat.passenger_gender || 'Passenger'} (${seat.passenger_age || 25} yrs)${seat.passenger_caption ? ` - Note: "${seat.passenger_caption}"` : ''} - Click to request swap`
+                        }
                       >
-                        <div>{seat.seat_number}</div>
-                        <div style={{ fontSize: '0.68rem', opacity: 0.85 }}>
-                          {isCurrent ? 'Current' : (isAvailable ? `₹${seat.price}` : (seat.passenger_gender === 'FEMALE' ? '♀ Occ' : '♂ Occ'))}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+                          {isInoperable && <Wrench size={11} />}
+                          <span>{seat.seat_number}</span>
                         </div>
+                        <div style={{ fontSize: '0.66rem', opacity: 0.9, marginTop: 2 }}>
+                          {isInoperable
+                            ? 'Damaged'
+                            : isCurrent
+                            ? 'Current'
+                            : isAvailable
+                            ? `₹${seat.price}`
+                            : (seat.passenger_gender === 'FEMALE' ? '♀ Swap' : '♂ Swap')}
+                        </div>
+                        {isBooked && seat.passenger_caption && (
+                          <div style={{
+                            fontSize: '0.54rem',
+                            background: '#fef08a',
+                            color: '#854d0e',
+                            padding: '1px 2px',
+                            borderRadius: 3,
+                            fontWeight: 700,
+                            marginTop: 2,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            🏷️ {seat.passenger_caption}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -200,16 +292,67 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
               </div>
             </div>
 
-            {/* Swap Summary */}
+            {/* Selected Action Details */}
             {selectedNewSeat && currentPassenger && (
-              <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-                <div>
-                  <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>Confirmed Relocation</div>
-                  <div style={{ fontSize: '1rem', fontWeight: 800, color: '#14532d' }}>
-                    Seat {currentPassenger.seat_number} &rarr; Seat {selectedNewSeat.seat_number}
+              <div style={{ marginBottom: '1.25rem' }}>
+                {!isTargetOccupied ? (
+                  <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: '0.8rem', color: '#166534', fontWeight: 600 }}>Instant Seat Relocation</div>
+                      <div style={{ fontSize: '1rem', fontWeight: 800, color: '#14532d' }}>
+                        Seat {currentPassenger.seat_number} &rarr; Seat {selectedNewSeat.seat_number} (Free Seat)
+                      </div>
+                    </div>
+                    <div className="badge badge-green">Instant Move</div>
                   </div>
-                </div>
-                <div className="badge badge-green">Ready to Swap</div>
+                ) : (
+                  <div style={{ background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 8, padding: '0.85rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: '0.8rem', color: '#b45309', fontWeight: 700 }}>Peer-to-Peer Seat Swap Request</div>
+                        <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#92400e' }}>
+                          Swap your Seat {currentPassenger.seat_number} with Occupant of Seat {selectedNewSeat.seat_number}
+                        </div>
+                      </div>
+                      <span className="badge" style={{ background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>
+                        Requires Approval
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '0.78rem', color: '#78350f', marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div>
+                        Occupant: <strong>{selectedNewSeat.passenger_gender || 'Passenger'}</strong>, Age: <strong>{selectedNewSeat.passenger_age || 25}</strong>. A swap request will be sent to this traveler's account.
+                      </div>
+                      {selectedNewSeat.passenger_caption && (
+                        <div style={{ background: '#fef3c7', border: '1px solid #fde68a', padding: '0.35rem 0.6rem', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span>🏷️</span>
+                          <span><strong>Traveler Note:</strong> "{selectedNewSeat.passenger_caption}"</span>
+                        </div>
+                      )}
+                      {selectedNewSeat.passenger_caption && (
+                        selectedNewSeat.passenger_caption.toLowerCase().includes('not interested') ||
+                        selectedNewSeat.passenger_caption.toLowerCase().includes('no swap')
+                      ) && (
+                        <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', padding: '0.35rem 0.6rem', borderRadius: 6, color: '#991b1b', fontSize: '0.75rem', fontWeight: 600 }}>
+                          ⚠️ Notice: This passenger has tagged themselves as "Not interested in seat swaps". Your request might be declined.
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 700, color: '#92400e', display: 'block', marginBottom: 4 }}>
+                        Reason / Note to Passenger:
+                      </label>
+                      <input 
+                        type="text" 
+                        value={swapReason} 
+                        onChange={(e) => setSwapReason(e.target.value)}
+                        placeholder="e.g. Traveling with companion / preference for this seat"
+                        style={{ width: '100%', padding: '0.45rem 0.65rem', border: '1px solid #fcd34d', borderRadius: 6, fontSize: '0.82rem', background: '#fff' }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -221,18 +364,23 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
               <button 
                 className="btn-primary" 
                 onClick={handleSwapSubmit} 
-                style={{ flex: 1.5 }}
+                style={{ flex: 1.5, background: isTargetOccupied ? '#d97706' : 'var(--primary)' }}
                 disabled={swapping || !selectedNewSeat}
               >
                 {swapping ? (
                   <>
                     <Loader2 size={16} className="animate-spin" />
-                    <span>Swapping Seat...</span>
+                    <span>Processing...</span>
+                  </>
+                ) : isTargetOccupied ? (
+                  <>
+                    <Send size={16} />
+                    <span>Send Peer Swap Request</span>
                   </>
                 ) : (
                   <>
                     <CheckCircle2 size={16} />
-                    <span>Confirm Seat Swap</span>
+                    <span>Confirm Instant Relocation</span>
                   </>
                 )}
               </button>
@@ -243,3 +391,4 @@ export default function SeatSwapModal({ booking, onClose, onSuccess }) {
     </div>
   );
 }
+

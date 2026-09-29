@@ -1,4 +1,4 @@
-// Blue Bus API Client
+import { handleMockApi } from './mockDemoData';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
 
@@ -19,7 +19,14 @@ export const setUser = (user) => {
   }
 };
 
+let isDemoMode = false;
+export const getIsDemoMode = () => isDemoMode;
+
 export async function apiRequest(endpoint, options = {}) {
+  if (isDemoMode) {
+    return await handleMockApi(endpoint, options);
+  }
+
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
@@ -32,31 +39,43 @@ export async function apiRequest(endpoint, options = {}) {
 
   const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
 
-  const response = await fetch(url, {
-    ...options,
-    headers
-  });
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-  if (!response.ok) {
-    let errorDetail = 'API request failed';
-    try {
-      const err = await response.json();
-      if (typeof err.detail === 'string') {
-        errorDetail = err.detail;
-      } else if (Array.isArray(err.detail)) {
-        errorDetail = err.detail.map(d => `${d.loc ? d.loc.slice(-1)[0] + ': ' : ''}${d.msg}`).join(', ');
-      } else if (err.message) {
-        errorDetail = err.message;
-      } else {
-        errorDetail = JSON.stringify(err);
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorDetail = 'API request failed';
+      try {
+        const err = await response.json();
+        if (typeof err.detail === 'string') {
+          errorDetail = err.detail;
+        } else if (Array.isArray(err.detail)) {
+          errorDetail = err.detail.map(d => `${d.loc ? d.loc.slice(-1)[0] + ': ' : ''}${d.msg}`).join(', ');
+        } else if (err.message) {
+          errorDetail = err.message;
+        } else {
+          errorDetail = JSON.stringify(err);
+        }
+      } catch {
+        errorDetail = await response.text();
       }
-    } catch {
-      errorDetail = await response.text();
+      throw new Error(errorDetail);
     }
-    throw new Error(errorDetail);
-  }
 
-  return response.json();
+    return await response.json();
+  } catch (networkError) {
+    // If backend cannot be reached (e.g. GitHub Pages static hosting or offline backend)
+    console.info(`[Blue Bus] Live API server unreachable (${networkError.message}). Operating in Standalone Demo Engine mode.`);
+    isDemoMode = true;
+    return await handleMockApi(endpoint, options);
+  }
 }
 
 // --- Auth APIs ---
@@ -143,6 +162,34 @@ export const swapSeatApi = async (pnr, payload) => {
   });
 };
 
+export const requestPeerSwapApi = async (pnr, payload) => {
+  return await apiRequest(`/bookings/${pnr}/request-swap`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+};
+
+export const getIncomingSwapRequestsApi = async () => {
+  return await apiRequest('/bookings/swap-requests/incoming');
+};
+
+export const getOutgoingSwapRequestsApi = async () => {
+  return await apiRequest('/bookings/swap-requests/outgoing');
+};
+
+export const respondSwapRequestApi = async (requestId, action) => {
+  return await apiRequest(`/bookings/swap-requests/${requestId}/respond`, {
+    method: 'POST',
+    body: JSON.stringify({ action })
+  });
+};
+
+export const cancelSwapRequestApi = async (requestId) => {
+  return await apiRequest(`/bookings/swap-requests/${requestId}/cancel`, {
+    method: 'POST'
+  });
+};
+
 // --- Coupons ---
 export const getCouponsApi = async () => {
   return await apiRequest('/coupons');
@@ -182,6 +229,21 @@ export const getAdminAllBookingsApi = async (params = {}) => {
   return await apiRequest(`/admin/all-bookings?${query.toString()}`);
 };
 
+export const getAllBusesApi = async () => {
+  return await apiRequest('/buses');
+};
+
+export const getBusSeatsApi = async (busId) => {
+  return await apiRequest(`/buses/${busId}/seats`);
+};
+
+export const toggleBusSeatOperableApi = async (busId, seatNumber, payload) => {
+  return await apiRequest(`/buses/${busId}/seats/${seatNumber}/toggle-operable`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+};
+
 export const createBusApi = async (payload) => {
   return await apiRequest('/buses', {
     method: 'POST',
@@ -202,3 +264,4 @@ export const createCouponApi = async (payload) => {
     body: JSON.stringify(payload)
   });
 };
+

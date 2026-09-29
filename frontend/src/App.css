@@ -517,6 +517,14 @@
   background: #fff1f2;
 }
 
+.seat-unit.inoperable {
+  background: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+  color: #b91c1c !important;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
 .seat-pill-label {
   font-size: 0.72rem;
   font-weight: 700;

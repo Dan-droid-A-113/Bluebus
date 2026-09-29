@@ -80,11 +80,13 @@ def search_buses(
         route = t.route
         operator = bus.operator
 
-        # Calculate available seats
-        booked_seat_ids = [
+        # Calculate available seats (excluding both booked and inoperable/damaged seats)
+        booked_seat_ids = {
             psg.seat_id for b in t.bookings if b.status == "CONFIRMED" for psg in b.passengers
-        ]
-        available_seats = max(0, bus.total_seats - len(booked_seat_ids))
+        }
+        operable_seats = [s for s in bus.seats if getattr(s, 'is_operable', True)]
+        available_seats = len([s for s in operable_seats if s.seat_id not in booked_seat_ids])
+
 
         # Get boarding & dropping points
         boarding_stops = [s for s in route.stops if s.stop_type in ["BOARDING", "BOTH"]]
@@ -166,4 +168,124 @@ def create_bus(
     db.add(new_bus)
     db.commit()
     db.refresh(new_bus)
+
+    # Inoperable seats set
+    inop_seats = {s.strip().upper() for s in (bus_in.inoperable_seats or []) if s.strip()}
+    inop_reason = bus_in.inoperable_reason or "Damaged / Maintenance"
+
+    seats = []
+    if bus_in.is_sleeper:
+        # Generate sleeper berths (e.g. 30 berths: 15 Lower L1-L15, 15 Upper U1-U15)
+        for deck in ["LOWER", "UPPER"]:
+            prefix = "L" if deck == "LOWER" else "U"
+            idx = 1
+            for r in range(1, 6):
+                # Col 1: Window single
+                s_num = f"{prefix}{idx}"
+                seats.append(models.Seat(
+                    bus_id=new_bus.bus_id,
+                    seat_number=s_num,
+                    deck=deck,
+                    row_num=r,
+                    col_num=1,
+                    seat_type="SLEEPER",
+                    is_ladies=(idx in [1, 4]),
+                    price_multiplier=1.1 if deck == "LOWER" else 1.0,
+                    is_operable=(s_num not in inop_seats),
+                    inoperable_reason=(inop_reason if s_num in inop_seats else None)
+                ))
+                idx += 1
+                # Col 3 & 4: Double berth
+                for c in [3, 4]:
+                    s_num = f"{prefix}{idx}"
+                    seats.append(models.Seat(
+                        bus_id=new_bus.bus_id,
+                        seat_number=s_num,
+                        deck=deck,
+                        row_num=r,
+                        col_num=c,
+                        seat_type="SLEEPER",
+                        is_ladies=False,
+                        price_multiplier=1.05 if deck == "LOWER" else 0.95,
+                        is_operable=(s_num not in inop_seats),
+                        inoperable_reason=(inop_reason if s_num in inop_seats else None)
+                    ))
+                    idx += 1
+    else:
+        # Seater layout (2+2 layout)
+        rows = max(1, bus_in.total_seats // 4)
+        for r in range(1, rows + 1):
+            cols = [("A", 1), ("B", 2), ("C", 4), ("D", 5)]
+            for col_letter, c_num in cols:
+                s_num = f"{r}{col_letter}"
+                seats.append(models.Seat(
+                    bus_id=new_bus.bus_id,
+                    seat_number=s_num,
+                    deck="LOWER",
+                    row_num=r,
+                    col_num=c_num,
+                    seat_type="SEATER",
+                    is_ladies=(col_letter in ["A", "B"] and r in [1, 2]),
+                    price_multiplier=1.0,
+                    is_operable=(s_num not in inop_seats),
+                    inoperable_reason=(inop_reason if s_num in inop_seats else None)
+                ))
+
+    db.add_all(seats)
+    db.commit()
+
     return new_bus
+
+@router.get("/{bus_id}/seats")
+def get_bus_seats(
+    bus_id: int,
+    db: Session = Depends(get_db)
+):
+    bus = db.query(models.Bus).filter(models.Bus.bus_id == bus_id).first()
+    if not bus:
+        raise HTTPException(status_code=404, detail="Bus not found")
+    
+    return [
+        {
+            "seat_id": s.seat_id,
+            "seat_number": s.seat_number,
+            "deck": s.deck,
+            "row_num": s.row_num,
+            "col_num": s.col_num,
+            "seat_type": s.seat_type,
+            "is_ladies": s.is_ladies,
+            "price_multiplier": s.price_multiplier,
+            "is_operable": getattr(s, "is_operable", True),
+            "inoperable_reason": getattr(s, "inoperable_reason", None)
+        }
+        for s in bus.seats
+    ]
+
+@router.put("/{bus_id}/seats/{seat_number}/toggle-operable")
+def toggle_bus_seat_operable(
+    bus_id: int,
+    seat_number: str,
+    toggle_in: schemas.SeatOperableToggle,
+    admin = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    seat = db.query(models.Seat).filter(
+        models.Seat.bus_id == bus_id,
+        models.Seat.seat_number == seat_number.strip().upper()
+    ).first()
+    if not seat:
+        raise HTTPException(status_code=404, detail=f"Seat {seat_number} not found on bus {bus_id}")
+
+    seat.is_operable = toggle_in.is_operable
+    seat.inoperable_reason = toggle_in.reason if not toggle_in.is_operable else None
+    db.commit()
+
+    status_str = "OPERABLE (Active)" if seat.is_operable else f"INOPERABLE ({seat.inoperable_reason})"
+    return {
+        "success": True,
+        "message": f"Seat {seat.seat_number} status updated to {status_str}",
+        "seat_number": seat.seat_number,
+        "is_operable": seat.is_operable,
+        "inoperable_reason": seat.inoperable_reason
+    }
+

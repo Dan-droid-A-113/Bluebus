@@ -135,7 +135,15 @@ export default function TicketModal({ booking, onClose, onCancelClick, onReviewC
                 {booking.passengers.map((p, index) => (
                   <tr key={p.passenger_id || index}>
                     <td>{index + 1}</td>
-                    <td><strong>{p.name}</strong></td>
+                    <td>
+                      <strong>{p.name}</strong>
+                      {p.caption && (
+                        <div style={{ fontSize: '0.72rem', color: '#2563eb', marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <span>🏷️</span>
+                          <span style={{ fontStyle: 'italic', fontWeight: 600 }}>"{p.caption}"</span>
+                        </div>
+                      )}
+                    </td>
                     <td>{p.age} yrs / {p.gender}</td>
                     <td>
                       <span className="badge badge-blue">Seat {p.seat_number}</span>

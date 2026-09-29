@@ -23,12 +23,13 @@ def get_trip_seat_layout(trip_id: int, db: Session = Depends(get_db)):
         .all()
     )
 
-    booked_map = {} # seat_id -> {"gender": psg.gender, "age": psg.age}
+    booked_map = {} # seat_id -> {"gender": psg.gender, "age": psg.age, "caption": psg.caption}
     for b in confirmed_bookings:
         for psg in b.passengers:
             booked_map[psg.seat_id] = {
                 "gender": psg.gender,
-                "age": psg.age
+                "age": psg.age,
+                "caption": getattr(psg, "caption", None)
             }
 
     all_seats = db.query(models.Seat).filter(models.Seat.bus_id == bus.bus_id).order_by(models.Seat.deck, models.Seat.row_num, models.Seat.col_num).all()
@@ -36,22 +37,32 @@ def get_trip_seat_layout(trip_id: int, db: Session = Depends(get_db)):
     lower_deck_seats = []
     upper_deck_seats = []
 
+    operable_count = 0
     for s in all_seats:
         is_booked = s.seat_id in booked_map
+        is_op = getattr(s, "is_operable", True)
+        inop_res = getattr(s, "inoperable_reason", None)
         seat_status = "AVAILABLE"
         passenger_gender = None
         passenger_age = None
+        passenger_caption = None
 
-        if is_booked:
+        if not is_op:
+            seat_status = "INOPERABLE"
+        elif is_booked:
             occupant = booked_map[s.seat_id]
             passenger_gender = occupant["gender"]
             passenger_age = occupant["age"]
+            passenger_caption = occupant.get("caption")
             if passenger_gender == "FEMALE":
                 seat_status = "LADIES_BOOKED"
             else:
                 seat_status = "BOOKED"
         elif s.is_ladies:
             seat_status = "LADIES_RESERVED" # Ladies quota or priority
+
+        if is_op and not is_booked:
+            operable_count += 1
 
         seat_item = schemas.SeatItem(
             seat_id=s.seat_id,
@@ -63,8 +74,11 @@ def get_trip_seat_layout(trip_id: int, db: Session = Depends(get_db)):
             is_ladies=s.is_ladies,
             price=round(trip.fare * s.price_multiplier, 2),
             status=seat_status,
+            is_operable=is_op,
+            inoperable_reason=inop_res,
             passenger_gender=passenger_gender,
-            passenger_age=passenger_age
+            passenger_age=passenger_age,
+            passenger_caption=passenger_caption
         )
 
         if s.deck == "UPPER":
@@ -76,7 +90,8 @@ def get_trip_seat_layout(trip_id: int, db: Session = Depends(get_db)):
     boarding_stops = [s for s in route.stops if s.stop_type in ["BOARDING", "BOTH"]]
     dropping_stops = [s for s in route.stops if s.stop_type in ["DROPPING", "BOTH"]]
 
-    available_count = len(all_seats) - len(booked_map)
+    available_count = operable_count
+
 
     return schemas.SeatLayoutResponse(
         trip_id=trip.trip_id,

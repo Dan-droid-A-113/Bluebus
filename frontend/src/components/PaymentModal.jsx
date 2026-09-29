@@ -35,7 +35,8 @@ export default function PaymentModal({ bookingPayload, onClose, onSuccess }) {
           seat_id: p.seat_id,
           name: (p.name || 'Passenger').trim(),
           age: Number(p.age) || 25,
-          gender: (p.gender || 'MALE').toUpperCase()
+          gender: (p.gender || 'MALE').toUpperCase(),
+          caption: p.caption ? p.caption.trim() : null
         }))
       };
 

@@ -123,6 +123,8 @@ class BusCreate(BaseModel):
     is_sleeper: bool = True
     total_seats: int = 30
     amenities: str = "WiFi,Charging Point,Water Bottle,Blanket,Reading Light,GPS"
+    inoperable_seats: Optional[List[str]] = [] # e.g. ["L2", "U5"]
+    inoperable_reason: Optional[str] = "Damaged / Maintenance"
 
 # --- Seat Layout Schemas ---
 class SeatItem(BaseModel):
@@ -134,9 +136,12 @@ class SeatItem(BaseModel):
     seat_type: str # SLEEPER or SEATER
     is_ladies: bool
     price: float
-    status: str # AVAILABLE, BOOKED, LADIES_BOOKED
+    status: str # AVAILABLE, BOOKED, LADIES_BOOKED, LADIES_RESERVED, INOPERABLE
+    is_operable: bool = True
+    inoperable_reason: Optional[str] = None
     passenger_gender: Optional[str] = None
     passenger_age: Optional[int] = None
+    passenger_caption: Optional[str] = None
 
 class SeatSwapRequest(BaseModel):
     passenger_id: int
@@ -149,6 +154,49 @@ class SeatSwapResponse(BaseModel):
     old_seat_number: str
     new_seat_number: str
     passenger_name: str
+
+# Peer-to-Peer Seat Swap Schemas
+class PeerSwapRequestCreate(BaseModel):
+    requester_passenger_id: int
+    target_seat_id: int
+    reason: Optional[str] = "Passenger requested seat swap"
+
+class PeerSwapRespondInput(BaseModel):
+    action: str # ACCEPT or REJECT
+
+class PeerSwapRequestResponse(BaseModel):
+    request_id: int
+    trip_id: int
+    status: str # PENDING, ACCEPTED, REJECTED, CANCELLED
+    reason: Optional[str] = None
+    created_at: str
+    updated_at: Optional[str] = None
+
+    # Requester
+    requester_user_name: str
+    requester_passenger_name: str
+    requester_seat_number: str
+    requester_pnr: str
+    requester_caption: Optional[str] = None
+
+    # Target
+    target_user_name: str
+    target_passenger_name: str
+    target_seat_number: str
+    target_pnr: str
+    target_caption: Optional[str] = None
+
+    # Trip info
+    source_city: str
+    destination_city: str
+    travel_date: str
+    departure_time: str
+    bus_name: str
+
+class SeatOperableToggle(BaseModel):
+    is_operable: bool
+    reason: Optional[str] = "Damaged / Maintenance"
+
 
 class SeatLayoutResponse(BaseModel):
     trip_id: int
@@ -208,6 +256,7 @@ class PassengerInput(BaseModel):
     name: str
     age: int = 25
     gender: str = "MALE" # MALE, FEMALE, OTHER
+    caption: Optional[str] = None # e.g. 'Carrying a baby', 'In a wheelchair', 'Sound sleeper', 'Not interested in swaps', etc.
 
 class BookingCreate(BaseModel):
     trip_id: int
@@ -227,6 +276,7 @@ class PassengerResponse(BaseModel):
     gender: str
     seat_number: str
     seat_fare: float
+    caption: Optional[str] = None
 
     class Config:
         from_attributes = True
