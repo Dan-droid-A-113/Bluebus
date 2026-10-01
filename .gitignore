@@ -18,6 +18,8 @@ env/
 
 # Database (contains user data - do not commit)
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 

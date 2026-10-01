@@ -64,5 +64,13 @@ def root():
     }
 
 @app.get("/health")
+@app.get(f"{settings.API_V1_STR}/health")
 def health_check():
-    return {"status": "healthy"}
+    db_type = "sqlite" if "sqlite" in settings.DATABASE_URL else "postgresql"
+    display_url = settings.DATABASE_URL.split("@")[-1] if "@" in settings.DATABASE_URL else settings.DATABASE_URL
+    return {
+        "status": "healthy",
+        "database_type": db_type,
+        "database_target": display_url,
+        "integrity_mode": "WAL Mode + Foreign Keys Enforced" if db_type == "sqlite" else "Connection Pool + Pre-ping"
+    }

@@ -20,10 +20,50 @@ export const setUser = (user) => {
 };
 
 let isDemoMode = false;
+let dbStatus = { connected: false, type: 'unknown', target: '' };
+let statusListeners = [];
+
 export const getIsDemoMode = () => isDemoMode;
+export const getDbStatus = () => dbStatus;
+
+export const subscribeDbStatus = (callback) => {
+  statusListeners.push(callback);
+  callback(dbStatus);
+  return () => {
+    statusListeners = statusListeners.filter(cb => cb !== callback);
+  };
+};
+
+function notifyStatus(status) {
+  dbStatus = status;
+  statusListeners.forEach(cb => cb(dbStatus));
+}
+
+export async function checkBackendConnection() {
+  try {
+    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(4000) });
+    if (res.ok) {
+      const data = await res.json();
+      isDemoMode = false;
+      notifyStatus({
+        connected: true,
+        type: data.database_type || 'sqlite',
+        target: data.database_target || 'bluebus.db',
+        integrity: data.integrity_mode || 'WAL Mode + Foreign Keys'
+      });
+      return { connected: true, ...data };
+    }
+  } catch (err) {
+    // Backend unreachable
+  }
+  isDemoMode = true;
+  notifyStatus({ connected: false, type: 'demo', target: 'Local Storage Mock' });
+  return { connected: false, mode: 'demo' };
+}
 
 export async function apiRequest(endpoint, options = {}) {
-  if (isDemoMode) {
+  // If explicitly in demo mode and not trying to reconnect, fallback to mock engine
+  if (isDemoMode && !options.retryLive) {
     return await handleMockApi(endpoint, options);
   }
 
@@ -41,7 +81,7 @@ export async function apiRequest(endpoint, options = {}) {
 
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2000);
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     const response = await fetch(url, {
       ...options,
@@ -69,11 +109,15 @@ export async function apiRequest(endpoint, options = {}) {
       throw new Error(errorDetail);
     }
 
+    if (isDemoMode) {
+      isDemoMode = false;
+      notifyStatus({ connected: true, type: 'live', target: 'Live Backend DBMS' });
+    }
     return await response.json();
   } catch (networkError) {
-    // If backend cannot be reached (e.g. GitHub Pages static hosting or offline backend)
     console.info(`[Blue Bus] Live API server unreachable (${networkError.message}). Operating in Standalone Demo Engine mode.`);
     isDemoMode = true;
+    notifyStatus({ connected: false, type: 'demo', target: 'Local Storage Mock' });
     return await handleMockApi(endpoint, options);
   }
 }
