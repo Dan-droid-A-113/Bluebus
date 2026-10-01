@@ -1,0 +1,44 @@
+name: Neon Cloud Database & Backend CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  test-cloud-db:
+    name: Verify Neon PostgreSQL & Tests
+    runs-on: ubuntu-latest
+
+    env:
+      # Defaults to your configured Neon Serverless PostgreSQL instance
+      DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://neondb_owner:npg_4S3AjBQWmJTD@ep-cool-cake-azuujsfo-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require' }}
+      SECRET_KEY: ci-test-secret-key-neon-2026
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Test Neon Cloud DB Connection & Verify Schema
+        run: |
+          python setup_cloud_db.py
+
+      - name: Run Full End-to-End Test Suite against Neon
+        run: |
+          python -m pytest backend/tests/test_bluebus.py -v
