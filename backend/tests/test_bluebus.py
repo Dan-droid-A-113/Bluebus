@@ -230,7 +230,8 @@ def test_peer_to_peer_seat_swap_flow():
     rahul_booking = client.get("/api/bookings/pnr/BB-PNR-772901").json()
     priya_booking = client.get("/api/bookings/pnr/BB-PNR-883192").json()
 
-    rahul_psg = rahul_booking["passengers"][0]
+    # Find Rahul specifically (booking may have multiple passengers)
+    rahul_psg = next((p for p in rahul_booking["passengers"] if "Rahul" in p["name"]), rahul_booking["passengers"][0])
     priya_psg = priya_booking["passengers"][0]
     rahul_seat = rahul_psg["seat_number"]
     priya_seat = priya_psg["seat_number"]
@@ -253,8 +254,12 @@ def test_peer_to_peer_seat_swap_flow():
         )
         assert create_swap.status_code == 200
         req_id = create_swap.json()["request_id"]
+        expected_rahul_seat = priya_seat
+        expected_priya_seat = rahul_seat
     else:
         req_id = pending_reqs[0]["request_id"]
+        expected_rahul_seat = pending_reqs[0]["target_seat_number"]
+        expected_priya_seat = pending_reqs[0]["requester_seat_number"]
 
     # 3. Priya accepts the swap request
     accept_res = client.post(f"/api/bookings/swap-requests/{req_id}/respond", headers=priya_headers, json={
@@ -268,8 +273,11 @@ def test_peer_to_peer_seat_swap_flow():
     rahul_pnr_after = client.get("/api/bookings/pnr/BB-PNR-772901").json()
     priya_pnr_after = client.get("/api/bookings/pnr/BB-PNR-883192").json()
 
-    assert rahul_pnr_after["passengers"][0]["seat_number"] == priya_seat
-    assert priya_pnr_after["passengers"][0]["seat_number"] == rahul_seat
+    rahul_after = next((p for p in rahul_pnr_after["passengers"] if p["passenger_id"] == rahul_psg["passenger_id"]), None)
+    priya_after = next((p for p in priya_pnr_after["passengers"] if p["passenger_id"] == priya_psg["passenger_id"]), None)
+
+    assert rahul_after is not None and rahul_after["seat_number"] == expected_rahul_seat
+    assert priya_after is not None and priya_after["seat_number"] == expected_priya_seat
 
 def test_admin_create_bus_with_inoperable_seats():
     admin_auth = client.post("/api/auth/login", json={"email": "admin@bluebus.com", "password": "Admin123!"})

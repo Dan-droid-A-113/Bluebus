@@ -86,6 +86,30 @@ python -m pytest backend/tests/test_bluebus.py -v
 
 ---
 
+## ☁️ Cloud DBMS Integration (Neon Serverless PostgreSQL)
+
+Blue Bus supports both local SQLite and production cloud SQL DBMS (e.g. Neon Serverless PostgreSQL, Supabase, AWS RDS).
+
+### 1. Configure Cloud Database
+Copy `.env.example` to `.env` and set your `DATABASE_URL`:
+```ini
+DATABASE_URL=postgresql://neondb_owner:<password>@ep-cool-cake-azuujsfo-pooler.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+```
+
+### 2. CLI Database Setup & Seed Tool
+Run the included CLI database manager:
+```powershell
+# Test connection, auto-create 13 tables, and seed initial demo data
+python setup_cloud_db.py
+```
+This utility:
+- Tests connectivity to the cloud PostgreSQL instance.
+- Creates all 13 relational tables and indices.
+- Seeds 3 test users, 5 operators, 45 routes/trips, and 166 berths/seats with safety badges and travel captions.
+
+---
+
+
 ## 🏛️ Directory Structure
 
 ```
