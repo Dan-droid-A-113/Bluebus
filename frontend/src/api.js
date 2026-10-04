@@ -41,7 +41,10 @@ function notifyStatus(status) {
 
 export async function checkBackendConnection() {
   try {
-    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(4000) });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch(`${API_BASE}/health`, { signal: controller.signal });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       isDemoMode = false;
@@ -51,10 +54,15 @@ export async function checkBackendConnection() {
         target: data.database_target || 'bluebus.db',
         integrity: data.integrity_mode || 'WAL Mode + Foreign Keys'
       });
-      return { connected: true, ...data };
+      return {
+        connected: true,
+        type: data.database_type || 'sqlite',
+        target: data.database_target || 'bluebus.db',
+        integrity: data.integrity_mode || 'WAL Mode + Foreign Keys'
+      };
     }
   } catch (err) {
-    // Backend unreachable
+    // Backend unreachable — silently fall through to demo mode
   }
   isDemoMode = true;
   notifyStatus({ connected: false, type: 'demo', target: 'Local Storage Mock' });
