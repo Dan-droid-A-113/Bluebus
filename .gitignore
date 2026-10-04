@@ -16,8 +16,9 @@ env/
 !.env.example
 *.env
 
-# Database (contains user data - do not commit)
+# Database (keep base bluebus.db bundled with repository)
 *.db
+!backend/bluebus.db
 *.db-shm
 *.db-wal
 *.sqlite

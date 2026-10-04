@@ -1,6 +1,6 @@
 import { handleMockApi } from './mockDemoData';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.port === '3000' ? 'http://localhost:8080/api' : '/api');
 
 export const getToken = () => localStorage.getItem('bluebus_token');
 export const setToken = (token) => localStorage.setItem('bluebus_token', token);
